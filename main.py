@@ -1,19 +1,52 @@
 import telebot
 from telebot import types
 import requests
+import random
+import os
+from dotenv import load_dotenv
 
-BOT_TOKEN = '8244664004:AAFV8MlCk32KOsWQzMqIc-MXDVeSXtLBKFg'
+load_dotenv()
 
-API_URL = 'http://openlibrary.org/search.json'
-COVERS_URL = 'https://covers.openlibrary.org/b/id'
+BOT_TOKEN = os.getenv('BOT_TOKEN')
+API_URL = os.getenv('API_URL')
+COVERS_URL = os.getenv('COVERS_URL')
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
-
 user_wishlist = {}
-
-
 users_cache = {}
+
+
+
+def show_wishlist(chat_id):
+    saved_books = user_wishlist.get(chat_id, [])
+    
+    if not saved_books:
+        bot.send_message(chat_id, "Ваш список желаний пуст.")
+        return
+
+    text = "📚 **Хочу прочитать:**\n\n"
+    for i, book in enumerate(saved_books, 1):
+        text += f"{i}. {book}\n"
+        
+    markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton("🗑 Очистить список", callback_data="clear_wishlist"))
+    
+    bot.send_message(chat_id, text, parse_mode='Markdown', reply_markup=markup)
+
+def show_genres(chat_id):
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        types.InlineKeyboardButton("Фантастика", callback_data="genre:science_fiction"),
+        types.InlineKeyboardButton("Детектив", callback_data="genre:detective_and_mystery"),
+        types.InlineKeyboardButton("Ужасы", callback_data="genre:horror"),
+        types.InlineKeyboardButton("Романтика", callback_data="genre:romance")
+    )
+    bot.send_message(chat_id, "Выберите категорию:", reply_markup=markup)
+
+def start_search(chat_id):
+    msg = bot.send_message(chat_id, "Введите название книги или автора:")
+    bot.register_next_step_handler(msg, perform_search)
 
 
 @bot.message_handler(commands=['start'])
@@ -29,25 +62,35 @@ def start_cmd(message):
     bot.send_message(message.chat.id, "Привет! Я помогу найти и сохранить книги.", reply_markup=markup)
 
 
-
 @bot.message_handler(func=lambda message: message.text == "❤️ Список желаний")
-def show_wishlist(message):
-    chat_id = message.chat.id
-    saved_books = user_wishlist.get(chat_id, [])
+def handle_text_wishlist(message):
+    show_wishlist(message.chat.id)
+
+@bot.message_handler(func=lambda message: message.text == "🏷 Выбрать жанр")
+def handle_text_genres(message):
+    show_genres(message.chat.id)
+
+@bot.message_handler(func=lambda message: message.text == "🔍 Найти книгу")
+def handle_text_search(message):
+    start_search(message.chat.id)
+
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("menu_"))
+def handle_menu_callbacks(call):
+    # Обязательно отвечаем, чтобы убрать часики загрузки
+    bot.answer_callback_query(call.id)
     
-    if not saved_books:
-        bot.send_message(chat_id, "Ваш список желаний пуст.")
-        return
-
-
-    text = "📚 **Хочу прочитать:**\n\n"
-    for i, book in enumerate(saved_books, 1):
-        text += f"{i}. {book}\n"
+    if call.data == "menu_search":
+        start_search(call.message.chat.id)
         
-    markup = types.InlineKeyboardMarkup()
-    markup.add(types.InlineKeyboardButton("🗑 Очистить список", callback_data="clear_wishlist"))
-    
-    bot.send_message(chat_id, text, parse_mode='Markdown', reply_markup=markup)
+    elif call.data == "menu_genre":
+        show_genres(call.message.chat.id)
+        
+    elif call.data == "menu_wishlist":
+        show_wishlist(call.message.chat.id)
+
+
 
 @bot.callback_query_handler(func=lambda call: call.data == "clear_wishlist")
 def clear_list(call):
@@ -55,32 +98,16 @@ def clear_list(call):
     bot.answer_callback_query(call.id, "Список очищен")
     bot.edit_message_text("Список желаний пуст.", call.message.chat.id, call.message.message_id)
 
-
-@bot.message_handler(func=lambda message: message.text == "🏷 Выбрать жанр")
-def genres_menu(message):
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    markup.add(
-        types.InlineKeyboardButton("Фантастика", callback_data="genre:science_fiction"),
-        types.InlineKeyboardButton("Детектив", callback_data="genre:detective_and_mystery"),
-        types.InlineKeyboardButton("Ужасы", callback_data="genre:horror"),
-        types.InlineKeyboardButton("Романтика", callback_data="genre:romance")
-    )
-    bot.send_message(message.chat.id, "Выберите категорию:", reply_markup=markup)
-
+# --- Поиск по жанру (с рандомом) ---
 @bot.callback_query_handler(func=lambda call: call.data.startswith("genre:"))
 def callback_genre(call):
     genre = call.data.split(":")[1]
-    bot.answer_callback_query(call.id, "Ищу книги...")
+    bot.answer_callback_query(call.id, "Ищу что-нибудь интересное...")
     
-    params = {'subject': genre, 'limit': 3}
+    random_offset = random.randint(0, 50)
+    params = {'subject': genre, 'limit': 3, 'offset': random_offset}
+    
     get_books_data(call.message.chat.id, params)
-
-
-
-@bot.message_handler(func=lambda message: message.text == "🔍 Найти книгу")
-def search_start(message):
-    msg = bot.send_message(message.chat.id, "Введите название или автора:")
-    bot.register_next_step_handler(msg, perform_search)
 
 def perform_search(message):
     if not message.text: return
@@ -91,28 +118,26 @@ def perform_search(message):
 @bot.callback_query_handler(func=lambda call: call.data.startswith("save:"))
 def save_book_handler(call):
     chat_id = call.message.chat.id
-    # Получаем индекс книги из кнопки (save:0, save:1...)
-    index = int(call.data.split(":")[1])
-    
-    # Достаем книгу из временного кэша
-    cached_books = users_cache.get(chat_id, [])
-    
-    if index < len(cached_books):
-        book_info = cached_books[index]
-        book_str = f"{book_info['title']} - {book_info['author']}"
+    try:
+        index = int(call.data.split(":")[1])
+        cached_books = users_cache.get(chat_id, [])
         
-        # Создаем список, если его нет
-        if chat_id not in user_wishlist:
-            user_wishlist[chat_id] = []
+        if index < len(cached_books):
+            book_info = cached_books[index]
+            book_str = f"{book_info['title']} - {book_info['author']}"
             
-        if book_str not in user_wishlist[chat_id]:
-            user_wishlist[chat_id].append(book_str)
-            bot.answer_callback_query(call.id, "✅ Добавлено!")
+            if chat_id not in user_wishlist:
+                user_wishlist[chat_id] = []
+                
+            if book_str not in user_wishlist[chat_id]:
+                user_wishlist[chat_id].append(book_str)
+                bot.answer_callback_query(call.id, "✅ Добавлено!")
+            else:
+                bot.answer_callback_query(call.id, "⚠️ Уже есть в списке")
         else:
-            bot.answer_callback_query(call.id, "⚠️ Уже есть в списке")
-    else:
-        bot.answer_callback_query(call.id, "Ошибка: поиск устарел")
-
+            bot.answer_callback_query(call.id, "Ошибка: поиск устарел")
+    except ValueError:
+        pass
 
 def get_books_data(chat_id, params):
     try:
@@ -123,16 +148,13 @@ def get_books_data(chat_id, params):
             bot.send_message(chat_id, "Ничего не найдено.")
             return
 
-        # Очищаем кэш пользователя перед новым поиском
         users_cache[chat_id] = []
 
-        # Перебираем результаты
         for i, doc in enumerate(data['docs']):
             title = doc.get('title', 'Без названия')
             authors = ", ".join(doc.get('author_name', ['Неизвестно']))
             year = doc.get('first_publish_year', '---')
             
-            # Сохраняем во временный список (чтобы потом добавить в вишлист)
             users_cache[chat_id].append({'title': title, 'author': authors})
             
             text = (f"📖 *{title}*\n"
@@ -152,6 +174,20 @@ def get_books_data(chat_id, params):
     except Exception as e:
         bot.send_message(chat_id, "Ошибка поиска.")
         print(f"Error: {e}")
+
+
+@bot.message_handler(func=lambda message: True)
+def gag(message):
+    markup = types.InlineKeyboardMarkup()
+    btn1 = types.InlineKeyboardButton("🔍 Найти книгу", callback_data="menu_search")
+    btn2 = types.InlineKeyboardButton("🏷 Выбрать жанр", callback_data="menu_genre")
+    btn3 = types.InlineKeyboardButton("❤️ Список желаний", callback_data="menu_wishlist")
+    
+    markup.add(btn1, btn2)
+    markup.add(btn3)
+
+    bot.send_message(message.chat.id, "Неизвестная команда. Выберите действие:", reply_markup=markup)
+
 
 if __name__ == '__main__':
     print("Бот запущен...")
