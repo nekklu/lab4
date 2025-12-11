@@ -48,29 +48,44 @@ def start_search(chat_id):
     msg = bot.send_message(chat_id, "Введите название книги или автора:")
     bot.register_next_step_handler(msg, perform_search)
 
+def perform_search(message):
+    if not message.text: return
+    params = {'q': message.text, 'limit': 3}
+    get_books_data(message.chat.id, params)
+
 
 @bot.message_handler(commands=['start'])
 def start_cmd(message):
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    btn1 = types.KeyboardButton("🔍 Найти книгу")
-    btn2 = types.KeyboardButton("🏷 Выбрать жанр")
-    btn3 = types.KeyboardButton("❤️ Список желаний")
+    markup1 = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    btn1 = types.KeyboardButton("Найти книгу")
+    btn2 = types.KeyboardButton("Выбрать жанр")
+    btn3 = types.KeyboardButton("Список желаний")
+
+    markup2 = types.InlineKeyboardMarkup()
+    btn4 = types.InlineKeyboardButton("Найти книгу", callback_data="menu_search")
+    btn5 = types.InlineKeyboardButton("Выбрать жанр", callback_data="menu_genre")
+    btn6 = types.InlineKeyboardButton("Список желаний", callback_data="menu_wishlist")
+
+    markup2.add(btn4, btn5)
+    markup2.add(btn6)
+
+    markup1.add(btn1, btn2)
+    markup1.add(btn3)
     
-    markup.add(btn1, btn2)
-    markup.add(btn3)
-    
-    bot.send_message(message.chat.id, "Привет! Я помогу найти и сохранить книги.", reply_markup=markup)
+    bot.send_message(message.chat.id, "Привет! Я помогу найти и сохранить книги.", reply_markup=markup1)
+
+    bot.send_message(message.chat.id, "Или используй эти кнопки:", reply_markup=markup2)
 
 
-@bot.message_handler(func=lambda message: message.text == "❤️ Список желаний")
+@bot.message_handler(func=lambda message: message.text.lower() == "список желаний")
 def handle_text_wishlist(message):
     show_wishlist(message.chat.id)
 
-@bot.message_handler(func=lambda message: message.text == "🏷 Выбрать жанр")
+@bot.message_handler(func=lambda message: message.text.lower() == "выбрать жанр")
 def handle_text_genres(message):
     show_genres(message.chat.id)
 
-@bot.message_handler(func=lambda message: message.text == "🔍 Найти книгу")
+@bot.message_handler(func=lambda message: message.text.lower() == "найти книгу")
 def handle_text_search(message):
     start_search(message.chat.id)
 
@@ -78,7 +93,6 @@ def handle_text_search(message):
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("menu_"))
 def handle_menu_callbacks(call):
-    # Обязательно отвечаем, чтобы убрать часики загрузки
     bot.answer_callback_query(call.id)
     
     if call.data == "menu_search":
@@ -98,7 +112,6 @@ def clear_list(call):
     bot.answer_callback_query(call.id, "Список очищен")
     bot.edit_message_text("Список желаний пуст.", call.message.chat.id, call.message.message_id)
 
-# --- Поиск по жанру (с рандомом) ---
 @bot.callback_query_handler(func=lambda call: call.data.startswith("genre:"))
 def callback_genre(call):
     genre = call.data.split(":")[1]
@@ -109,10 +122,6 @@ def callback_genre(call):
     
     get_books_data(call.message.chat.id, params)
 
-def perform_search(message):
-    if not message.text: return
-    params = {'q': message.text, 'limit': 3}
-    get_books_data(message.chat.id, params)
 
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("save:"))
@@ -139,6 +148,7 @@ def save_book_handler(call):
     except ValueError:
         pass
 
+
 def get_books_data(chat_id, params):
     try:
         response = requests.get(API_URL, params=params, timeout=10)
@@ -153,13 +163,21 @@ def get_books_data(chat_id, params):
         for i, doc in enumerate(data['docs']):
             title = doc.get('title', 'Без названия')
             authors = ", ".join(doc.get('author_name', ['Неизвестно']))
-            year = doc.get('first_publish_year', '---')
+            year = doc.get('first_publish_year', '-')
+            pages = doc.get('number_of_pages') or doc.get('number_of_pages_median') or '-'
+            publisher = doc.get('publisher', '-')
+            editions = doc.get('edition_count', '-')
+            book_url = f"https://openlibrary.org{doc.get('key', '')}"                
             
             users_cache[chat_id].append({'title': title, 'author': authors})
             
             text = (f"📖 *{title}*\n"
                     f"👤 Автор: {authors}\n"
-                    f"📅 Год: {year}")
+                    f"📅 Год: {year}\n"
+                    f"Изданий: {editions}\n"
+                    f"Кол-во страниц: {pages}\n"
+                    f"Издатель: {publisher}\n"
+                    f"Подробнее:{book_url}")
 
             markup = types.InlineKeyboardMarkup()
             markup.add(types.InlineKeyboardButton("❤️ В список желаний", callback_data=f"save:{i}"))
@@ -179,9 +197,9 @@ def get_books_data(chat_id, params):
 @bot.message_handler(func=lambda message: True)
 def gag(message):
     markup = types.InlineKeyboardMarkup()
-    btn1 = types.InlineKeyboardButton("🔍 Найти книгу", callback_data="menu_search")
-    btn2 = types.InlineKeyboardButton("🏷 Выбрать жанр", callback_data="menu_genre")
-    btn3 = types.InlineKeyboardButton("❤️ Список желаний", callback_data="menu_wishlist")
+    btn1 = types.InlineKeyboardButton("Найти книгу", callback_data="menu_search")
+    btn2 = types.InlineKeyboardButton("Выбрать жанр", callback_data="menu_genre")
+    btn3 = types.InlineKeyboardButton("Список желаний", callback_data="menu_wishlist")
     
     markup.add(btn1, btn2)
     markup.add(btn3)
